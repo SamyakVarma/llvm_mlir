@@ -98,3 +98,95 @@ func.func @test_combined(%n: index, %m: index,
 
   return %2 : f32
 }
+
+// ---------------------------------------------------------------------------
+// TEST 6: 1-D tensor (rank-1 alloc and load)
+// ---------------------------------------------------------------------------
+// Exercises ops on a rank-1 tensor (only 1 index required).
+//
+// EXPECTED LOWERING:
+//   mdarray.alloc(%n)  -> memref.alloc(%n) : memref<?xf32>
+//   mdarray.load %0[%i] -> memref.load %0[%i] : memref<?xf32>
+
+func.func @test_1d_alloc_load(%n: index, %i: index) -> f32 {
+  %0 = mdarray.alloc(%n) : tensor<?xf32>
+  %1 = mdarray.load %0[%i] : tensor<?xf32> -> f32
+  return %1 : f32
+}
+
+// ---------------------------------------------------------------------------
+// TEST 7: Integer element type (i32)
+// ---------------------------------------------------------------------------
+// Ensures the type converter handles non-f32 element types correctly.
+//
+// EXPECTED LOWERING:
+//   mdarray.alloc      -> memref.alloc  : memref<?x?xi32>
+//   mdarray.store      -> memref.store  (i32 value)
+//   mdarray.load       -> memref.load   (i32 result)
+
+func.func @test_i32_tensor(%n: index, %m: index,
+                           %i: index, %j: index, %val: i32) -> i32 {
+  %0 = mdarray.alloc(%n, %m) : tensor<?x?xi32>
+  mdarray.store %val, %0[%i, %j] : tensor<?x?xi32>
+  %1 = mdarray.load %0[%i, %j] : tensor<?x?xi32> -> i32
+  return %1 : i32
+}
+
+// ---------------------------------------------------------------------------
+// TEST 8: Slice then load from the sub-array
+// ---------------------------------------------------------------------------
+// Chains slice and load: allocate -> extract sub-region -> load from it.
+//
+// EXPECTED LOWERING:
+//   mdarray.alloc  -> memref.alloc
+//   mdarray.slice  -> memref.subview (+ optional memref.cast)
+//   mdarray.load   -> memref.load on the subview result
+
+func.func @test_slice_then_load(%n: index, %m: index,
+                                %off0: index, %off1: index,
+                                %sz0: index, %sz1: index,
+                                %i: index, %j: index) -> f32 {
+  %0 = mdarray.alloc(%n, %m) : tensor<?x?xf32>
+  %1 = mdarray.slice %0[%off0, %off1][%sz0, %sz1]
+       : tensor<?x?xf32> -> tensor<?x?xf32>
+  %2 = mdarray.load %1[%i, %j] : tensor<?x?xf32> -> f32
+  return %2 : f32
+}
+
+// ---------------------------------------------------------------------------
+// TEST 9: Double transpose
+// ---------------------------------------------------------------------------
+// Transposes a 2-D array twice. Each transpose lowers to its own scf.for nest.
+// Net effect: second result has the same logical layout as the original.
+//
+// EXPECTED LOWERING:
+//   First  transpose -> memref.alloc(MxN) + scf.for nest (out[j][i] = in[i][j])
+//   Second transpose -> memref.alloc(NxM) + scf.for nest (out[i][j] = tmp[j][i])
+
+func.func @test_double_transpose(%n: index, %m: index) -> tensor<?x?xf32> {
+  %0 = mdarray.alloc(%n, %m) : tensor<?x?xf32>
+  %1 = mdarray.transpose %0 : tensor<?x?xf32> -> tensor<?x?xf32>
+  %2 = mdarray.transpose %1 : tensor<?x?xf32> -> tensor<?x?xf32>
+  return %2 : tensor<?x?xf32>
+}
+
+// ---------------------------------------------------------------------------
+// TEST 10: Multiple stores, then load
+// ---------------------------------------------------------------------------
+// Stores two values at different indices, then reads one back.
+// Each store lowers independently to its own memref.store.
+//
+// EXPECTED LOWERING:
+//   mdarray.alloc  -> memref.alloc
+//   mdarray.store (x2) -> memref.store (x2) at different indices
+//   mdarray.load   -> memref.load
+
+func.func @test_multiple_stores(%n: index, %m: index,
+                                %i0: index, %j0: index, %v0: f32,
+                                %i1: index, %j1: index, %v1: f32) -> f32 {
+  %0 = mdarray.alloc(%n, %m) : tensor<?x?xf32>
+  mdarray.store %v0, %0[%i0, %j0] : tensor<?x?xf32>
+  mdarray.store %v1, %0[%i1, %j1] : tensor<?x?xf32>
+  %1 = mdarray.load %0[%i0, %j0] : tensor<?x?xf32> -> f32
+  return %1 : f32
+}

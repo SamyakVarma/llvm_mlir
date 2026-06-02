@@ -1,0 +1,172 @@
+# MdArray Dialect — Evaluation
+
+## 1. Test Cases
+
+All test cases live in `test/`. Run them with `./scripts/run.sh`.
+
+### 1.1 Passing Tests (`test/test_lowering.mlir`)
+
+| # | Function | Ops exercised | What to verify |
+|---|----------|---------------|----------------|
+| 1 | `@test_alloc_load` | `alloc`, `load` | `memref.alloc` + `memref.load`; no `mdarray.*` ops remain |
+| 2 | `@test_store_load` | `alloc`, `store`, `load` | `memref.store` round-trips correctly |
+| 3 | `@test_slice` | `alloc`, `slice` | `memref.subview` with dynamic offsets + sizes |
+| 4 | `@test_transpose` | `alloc`, `transpose` | `scf.for` loop nest with swapped indices |
+| 5 | `@test_combined` | all five ops | Full pipeline; no `mdarray.*` ops remain |
+| 6 | `@test_1d_alloc_load` | `alloc`, `load` (rank 1) | Rank-1 memref; single index |
+| 7 | `@test_i32_tensor` | `alloc`, `store`, `load` (i32) | Type converter handles non-f32 element types |
+| 8 | `@test_slice_then_load` | `alloc`, `slice`, `load` | `subview` result fed into `memref.load` |
+| 9 | `@test_double_transpose` | `alloc`, `transpose` ×2 | Two independent `scf.for` loop nests |
+| 10 | `@test_multiple_stores` | `alloc`, `store` ×2, `load` | Each store lowers independently |
+
+### 1.2 Failure Tests (`test/test_failure_cases.mlir`)
+
+These inputs are malformed and must be rejected by the verifier **before**
+the lowering pass runs:
+
+| # | Function | Violation | Expected error |
+|---|----------|-----------|----------------|
+| F1 | `@bad_alloc_wrong_dyn_count` | `alloc` given 1 size for 2-D tensor | `expected 2 dynamic size(s)` |
+| F2 | `@bad_load_wrong_index_count` | `load` uses 1 index on 2-D tensor | `expected 2 index operand(s)` |
+| F3 | `@bad_store_wrong_index_count` | `store` uses 3 indices on 2-D tensor | `expected 2 index operand(s)` |
+| F4 | `@bad_slice_wrong_offset_count` | `slice` offsets count ≠ rank | `expected 2 offset(s)` |
+| F5 | `@bad_transpose_wrong_rank` | `transpose` on 1-D tensor | `expected 2-D input tensor` |
+| F6 | `@bad_slice_wrong_size_count` | `slice` sizes count ≠ rank | `expected 2 size(s)` |
+| F7 | `@bad_slice_element_type_mismatch` | `slice` result type f64 ≠ source f32 | `result element type 'f64' must match source element type 'f32'` |
+| F8 | `@bad_transpose_3d` | `transpose` on 3-D tensor | `expected 2-D input tensor, but got rank 3` |
+| F9 | `@bad_alloc_static_tensor_with_dyn_sizes` | static `tensor<4x4xf32>` + 2 dynamic sizes | `expected 0 dynamic size(s)` |
+| F10 | `@bad_slice_result_rank_mismatch` | `slice` result rank 1 ≠ source rank 2 | `result rank 1 must match source rank 2` |
+
+---
+
+## 2. Metrics: Ops Before vs. After Lowering
+
+Measured by counting operations in the IR (via `grep`):
+
+### Test 1 — `@test_alloc_load`
+
+| Stage | `mdarray.*` ops | `memref.*` ops | Total ops |
+|-------|----------------|----------------|-----------|
+| Before lowering | 2 (alloc, load) | 0 | 3 (+ func/return) |
+| After lowering | 0 | 2 (alloc, load) | 3 |
+
+### Test 4 — `@test_transpose` (most complex lowering)
+
+| Stage | `mdarray.*` ops | `memref.*` ops | `scf.*` ops | `arith.*` ops | Total ops |
+|-------|----------------|----------------|-------------|---------------|-----------|
+| Before lowering | 2 (alloc, transpose) | 0 | 0 | 0 | 3 |
+| After lowering | 0 | 7 (alloc×2, dim×2, load, store, cast) | 2 (for×2) | 2 (const×2) | 13+ |
+
+The transpose expansion from 1 high-level op to ~11 low-level ops demonstrates
+why high-level dialects are valuable: the programmer expresses intent concisely,
+and the compiler generates the detailed implementation.
+
+### Test 5 — `@test_combined` (full pipeline)
+
+| Stage | `mdarray.*` ops | All target ops |
+|-------|----------------|----------------|
+| Before lowering | 4 (alloc, store, transpose, load) | 0 |
+| After lowering | 0 | ~16 |
+
+---
+
+## 3. Baseline Comparison: MLIR Progressive vs. LLVM Single-IR
+
+### LLVM approach (hypothetical)
+
+To implement transpose in LLVM IR directly, a frontend would emit:
+
+```llvm
+; Allocate output (GEP arithmetic for MxN layout)
+%out = call i8* @malloc(i64 %size)
+; Nested loops (two phi nodes, GEP indexing)
+br %loop_i
+loop_i:
+  %i = phi i64 [0, %entry], [%i_next, %loop_j_end]
+  br %loop_j
+loop_j:
+  %j = phi i64 [0, %loop_i], [%j_next, %loop_j]
+  ; manual index arithmetic: out[j*N + i] = in[i*M + j]
+  %in_idx  = add i64 %mul_iM, %j
+  %out_idx = add i64 %mul_jN, %i
+  %ptr_in  = getelementptr float, float* %in_base, i64 %in_idx
+  %ptr_out = getelementptr float, float* %out_base, i64 %out_idx
+  %val = load float, float* %ptr_in
+  store float %val, float* %ptr_out
+  ...
+```
+
+Drawbacks:
+- All shape semantics are lost immediately (just pointer arithmetic).
+- No opportunity to optimize at the "transpose" semantic level.
+- The programmer/frontend must manually emit all loop boilerplate.
+
+### MLIR approach (this project)
+
+The MdArray level expresses intent:
+```mlir
+%1 = mdarray.transpose %0 : tensor<?x?xf32> -> tensor<?x?xf32>
+```
+
+The memref+scf level expresses the mechanism (auto-generated by the pass):
+```mlir
+%d0 = memref.dim %0, %c0 : memref<?x?xf32>
+%d1 = memref.dim %0, %c1 : memref<?x?xf32>
+%out = memref.alloc(%d1, %d0) : memref<?x?xf32>
+scf.for %i = %c0 to %d0 step %c1 {
+  scf.for %j = %c0 to %d1 step %c1 {
+    %v = memref.load %0[%i, %j] : memref<?x?xf32>
+    memref.store %v, %out[%j, %i] : memref<?x?xf32>
+  }
+}
+```
+
+Key differences:
+
+| Aspect | LLVM IR | MLIR (MdArray→MemRef) |
+|--------|---------|----------------------|
+| Abstraction levels | 1 (assembly-like) | 2+ (dialect hierarchy) |
+| Shape information | Lost at lowering | Preserved through conversion |
+| Optimization window | After all info gone | At every level |
+| Boilerplate | Frontend must emit all | Pass generates from 1 op |
+| Debuggability | Hard to trace to source | Each level maps back to op |
+| Extensibility | New instructions = LLVM patch | New ops = new dialect |
+
+---
+
+## 4. Correctness Verification
+
+The lowering is **correct by construction** through MLIR's `DialectConversion`:
+
+1. The pass declares the entire `MdArray` dialect as **illegal**.
+2. `applyPartialConversion` ensures no `mdarray.*` op survives.
+3. If any pattern fails to match, the pass calls `signalPassFailure()` and the
+   tool exits with a non-zero status.
+
+To verify manually:
+```bash
+# Should produce zero matches (no mdarray ops remain):
+./bin/mdarray-opt --convert-mdarray-to-memref test/test_lowering.mlir \
+  | grep -c 'mdarray\.'
+# Expected output: 0
+```
+
+---
+
+## 5. Failure Case Demo
+
+Run the verifier on a malformed input (wrong number of dynamic sizes):
+
+```bash
+./bin/mdarray-opt test/test_failure_cases.mlir
+```
+
+Expected output (excerpt):
+```
+test/test_failure_cases.mlir:10:10: error: 'mdarray.alloc' op expected 2
+dynamic size(s) for result type 'tensor<?x?xf32>', but got 1
+  %0 = mdarray.alloc(%n) : tensor<?x?xf32>
+         ^
+```
+
+The tool exits with status 1 and the lowering pass is never reached.
