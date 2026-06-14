@@ -1,0 +1,266 @@
+# SCRIPTS, SOURCE CODE AND TEST CASES
+
+## Overview
+
+This section describes the build and execution scripts, source code organization, and test cases used in the implementation of the **MdArray Dialect for Tensor Operations using MLIR**. These components collectively enable the creation, compilation, execution, and validation of the custom MdArray dialect and its lowering pass to the MemRef dialect.
+
+---
+
+# Scripts
+
+The project provides two scripts that automate the build and execution process.
+
+### build.sh
+
+The build script is used to configure and compile the LLVM/MLIR project along with the custom MdArray dialect implementation.
+
+Functions performed by the script:
+
+* Creates the build directory if it does not already exist.
+* Configures the LLVM build system using CMake.
+* Enables MLIR support.
+* Builds the custom tool `mdarray-opt`.
+* Generates all required executables and libraries.
+
+Typical workflow:
+
+1. Configure LLVM and MLIR.
+2. Generate build files.
+3. Compile the MdArray dialect.
+4. Produce executable binaries.
+
+This script eliminates the need to manually enter multiple build commands and ensures a consistent build process across different environments.
+
+### run.sh
+
+The run script is responsible for executing the MdArray lowering pass.
+
+Functions performed by the script:
+
+* Loads the test MLIR input program.
+* Invokes the custom `mdarray-opt` tool.
+* Executes the `convert-mdarray-to-memref` pass.
+* Displays the transformed MLIR output.
+* Verifies successful conversion of MdArray operations.
+
+The script provides a simple mechanism for demonstrating the functionality of the project without manually executing multiple commands.
+
+---
+
+# Source Code Structure
+
+The source code follows the standard MLIR dialect development architecture and is organized into separate components for declarations, implementations, and tooling.
+
+### include/MdArray
+
+This directory contains all header files and TableGen definitions required for the MdArray dialect.
+
+Files include:
+
+* MdArrayDialect.td
+* MdArrayDialect.h
+* MdArrayOps.td
+* MdArrayOps.h
+* MdArrayPasses.td
+* MdArrayPasses.h
+
+Responsibilities:
+
+* Defines the MdArray dialect.
+* Declares all custom operations.
+* Specifies operation syntax and semantics.
+* Defines verification rules.
+* Declares lowering passes.
+* Generates MLIR boilerplate code through TableGen.
+
+---
+
+### lib/MdArray
+
+This directory contains the implementation of the dialect.
+
+Files include:
+
+* MdArrayDialect.cpp
+* MdArrayOps.cpp
+* MdArrayPasses.cpp
+
+Responsibilities:
+
+* Registers the custom dialect.
+* Implements operation builders.
+* Implements operation verification.
+* Implements type conversion logic.
+* Implements conversion patterns.
+* Implements the MdArray-to-MemRef lowering pass.
+
+The most important component is the lowering pass, which converts all MdArray operations into equivalent MemRef and SCF operations.
+
+---
+
+### mdarray-opt
+
+This directory contains the command-line driver tool.
+
+File:
+
+* mdarray-opt.cpp
+
+Responsibilities:
+
+* Registers the MdArray dialect.
+* Registers conversion passes.
+* Loads MLIR input files.
+* Executes the lowering pipeline.
+* Produces transformed MLIR output.
+
+The tool acts as the execution environment for testing and demonstrating the project.
+
+---
+
+# Test Cases
+
+A collection of MLIR test programs is used to verify correctness and functionality.
+
+### Test Case 1 – Allocation and Load
+
+Purpose:
+
+Verify tensor allocation and element loading.
+
+Operations Tested:
+
+* mdarray.alloc
+* mdarray.load
+
+Expected Output:
+
+* memref.alloc
+* memref.load
+
+Result:
+
+PASS
+
+---
+
+### Test Case 2 – Store and Load
+
+Purpose:
+
+Verify storage and retrieval of tensor elements.
+
+Operations Tested:
+
+* mdarray.store
+* mdarray.load
+
+Expected Output:
+
+* memref.store
+* memref.load
+
+Result:
+
+PASS
+
+---
+
+### Test Case 3 – Slice Operation
+
+Purpose:
+
+Verify extraction of sub-regions from tensors.
+
+Operations Tested:
+
+* mdarray.slice
+
+Expected Output:
+
+* memref.subview
+
+Result:
+
+PASS
+
+---
+
+### Test Case 4 – Transpose Operation
+
+Purpose:
+
+Verify matrix transposition functionality.
+
+Operations Tested:
+
+* mdarray.transpose
+
+Expected Output:
+
+* memref.alloc
+* memref.load
+* memref.store
+* scf.for loops
+
+Result:
+
+PASS
+
+---
+
+### Test Case 5 – Combined Pipeline
+
+Purpose:
+
+Verify interaction of multiple tensor operations in a single program.
+
+Operations Tested:
+
+* mdarray.alloc
+* mdarray.store
+* mdarray.transpose
+* mdarray.load
+
+Expected Output:
+
+A fully lowered MemRef-based representation containing only legal target dialect operations.
+
+Result:
+
+PASS
+
+---
+
+# Repository Organization
+
+```text
+MDArray/
+│
+├── README.docx
+├── DESIGN.docx
+├── IMPLEMENTATION.docx
+├── EVALUATION.docx
+│
+├── scripts/
+│   ├── build.sh
+│   └── run.sh
+│
+├── src/
+│   ├── include/
+│   │   └── MdArray/
+│   │
+│   ├── lib/
+│   │   └── MdArray/
+│   │
+│   └── mdarray-opt/
+│
+└── testcases/
+    ├── test_alloc_load.mlir
+    ├── test_store_load.mlir
+    ├── test_slice.mlir
+    ├── test_transpose.mlir
+    └── test_combined.mlir
+```
+
+This organization provides a clean separation between documentation, build scripts, source code, and test programs. It follows standard LLVM/MLIR project conventions and simplifies development, testing, maintenance, and evaluation of the MdArray dialect implementation.

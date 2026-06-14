@@ -1,0 +1,322 @@
+# DESIGN
+
+---
+
+# 1. Design Objective
+
+The objective of this project is to design a custom MLIR dialect named **MdArray** that supports high-level tensor operations and to implement a lowering pass that converts these operations into MLIR's standard MemRef dialect.
+
+The design follows MLIR's philosophy of **progressive lowering**, where computations are represented at multiple abstraction levels before being transformed into lower-level representations.
+
+---
+
+# 2. Design Approach
+
+The project is divided into two major stages:
+
+### Stage 1: High-Level Tensor Representation
+
+A custom dialect called **MdArray** is created to represent tensor operations in a simple and readable form.
+
+The dialect contains the following operations:
+
+* mdarray.alloc
+* mdarray.load
+* mdarray.store
+* mdarray.slice
+* mdarray.transpose
+
+These operations provide a tensor-centric abstraction without exposing implementation details such as memory layouts, loops, or address calculations.
+
+Example:
+
+```mlir id="s9krt6"
+%tensor = mdarray.alloc(%n, %m)
+%value = mdarray.load %tensor[%i, %j]
+```
+
+---
+
+### Stage 2: Lowering to MemRef Dialect
+
+A conversion pass is implemented using MLIR's Dialect Conversion Framework.
+
+Each MdArray operation is mapped to equivalent MemRef operations.
+
+| MdArray Operation | Lowered Operation                          |
+| ----------------- | ------------------------------------------ |
+| mdarray.alloc     | memref.alloc                               |
+| mdarray.load      | memref.load                                |
+| mdarray.store     | memref.store                               |
+| mdarray.slice     | memref.subview                             |
+| mdarray.transpose | memref.alloc + scf.for + memref.load/store |
+
+This transformation removes all MdArray operations and produces a valid MemRef-based IR.
+
+---
+
+# 3. System Architecture
+
+```text id="htk0l1"
+High-Level MdArray Dialect
+          │
+          ▼
+Dialect Conversion Pass
+          │
+          ▼
+MemRef + SCF Dialects
+          │
+          ▼
+LLVM Dialect
+          │
+          ▼
+Machine Code
+```
+
+The MdArray dialect acts as a front-end representation while MemRef serves as the lower-level memory representation.
+
+---
+
+# 4. Operation Design
+
+## 4.1 Alloc Operation
+
+Purpose:
+Allocate a multi-dimensional tensor with dynamic dimensions.
+
+Input:
+
+* Tensor dimensions
+
+Output:
+
+* Ranked tensor
+
+Lowering:
+
+* Converted to memref.alloc
+
+---
+
+## 4.2 Load Operation
+
+Purpose:
+Read an element from a tensor.
+
+Input:
+
+* Tensor
+* Indices
+
+Output:
+
+* Element value
+
+Lowering:
+
+* Converted to memref.load
+
+---
+
+## 4.3 Store Operation
+
+Purpose:
+Write an element into a tensor.
+
+Input:
+
+* Value
+* Tensor
+* Indices
+
+Output:
+
+* Updated tensor state
+
+Lowering:
+
+* Converted to memref.store
+
+---
+
+## 4.4 Slice Operation
+
+Purpose:
+Extract a sub-region from a tensor.
+
+Input:
+
+* Tensor
+* Offsets
+* Sizes
+
+Output:
+
+* Tensor slice
+
+Lowering:
+
+* Converted to memref.subview
+
+---
+
+## 4.5 Transpose Operation
+
+Purpose:
+Swap rows and columns of a two-dimensional tensor.
+
+Input:
+
+* Tensor
+
+Output:
+
+* Transposed tensor
+
+Lowering:
+
+* Nested SCF loops
+* memref.load
+* memref.store
+
+Reason:
+MemRef dialect does not provide a direct transpose operation.
+
+---
+
+# 5. Type Conversion Strategy
+
+The MdArray dialect uses tensor types.
+
+Example:
+
+```mlir id="3v4gmx"
+tensor<?x?xf32>
+```
+
+During lowering, these types are converted into MemRef types.
+
+```mlir id="c3ebql"
+memref<?x?xf32>
+```
+
+This conversion is performed using a custom Type Converter.
+
+---
+
+# 6. Verification Strategy
+
+Each operation includes verification checks to ensure correctness.
+
+Examples:
+
+### Alloc Verification
+
+* Dynamic dimension count must match operands.
+
+### Load Verification
+
+* Number of indices must equal tensor rank.
+
+### Store Verification
+
+* Stored value type must match tensor element type.
+
+### Slice Verification
+
+* Offset count and size count must match rank.
+
+### Transpose Verification
+
+* Input tensor must be two-dimensional.
+
+---
+
+# 7. Alternative Designs Considered
+
+## Alternative 1: Direct Lowering to LLVM Dialect
+
+Approach:
+
+Convert MdArray operations directly into LLVM dialect operations.
+
+Advantages:
+
+* Fewer compilation stages.
+* Simpler pipeline.
+
+Disadvantages:
+
+* Tensor semantics are lost early.
+* Difficult to optimize tensor operations.
+* Complex implementation.
+
+Reason for Rejection:
+
+The goal of the project is to demonstrate MLIR's progressive lowering mechanism.
+
+---
+
+## Alternative 2: Use Existing Tensor Dialect
+
+Approach:
+
+Reuse MLIR's built-in Tensor dialect instead of creating a custom dialect.
+
+Advantages:
+
+* Less implementation effort.
+* Already supported by MLIR.
+
+Disadvantages:
+
+* Does not demonstrate custom dialect creation.
+* Does not satisfy assignment requirements.
+
+Reason for Rejection:
+
+Assignment requires designing a custom dialect.
+
+---
+
+## Alternative 3: Lower Through Linalg Dialect
+
+Approach:
+
+MdArray → Tensor → Linalg → MemRef
+
+Advantages:
+
+* Better optimization opportunities.
+* Closer to production ML compiler pipelines.
+
+Disadvantages:
+
+* Increased implementation complexity.
+* Requires additional conversion passes.
+
+Reason for Rejection:
+
+The assignment specifically targets conversion to MemRef dialect.
+
+---
+
+# 8. Selected Design
+
+The chosen design is:
+
+```text id="wm6z92"
+MdArray Dialect
+       ↓
+Dialect Conversion Pass
+       ↓
+MemRef + SCF Dialects
+```
+
+This approach satisfies all assignment requirements while clearly demonstrating MLIR's progressive lowering framework.
+
+---
+
+# 9. Conclusion
+
+The MdArray design provides a clean abstraction for tensor operations while enabling systematic lowering into lower-level MLIR dialects. The selected architecture balances simplicity, extensibility, and educational value, making it suitable for demonstrating MLIR's dialect-based compilation model.

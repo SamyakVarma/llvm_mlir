@@ -194,3 +194,78 @@ for result type 'tensor<?x?xf32>', but got 1
 
 This is a standard MLIR diagnostic pattern — the framework captures the source
 location from the op's `Location` attribute and prepends it automatically.
+
+---
+
+## 5. Testing: C → LLVM → MLIR → MdArray Lowering
+
+Passing tests follow a multi-stage pipeline. Verifier failure tests remain
+hand-written MLIR (`test/test_failure_cases.mlir`) because invalid mdarray IR
+cannot be expressed through the C API.
+
+### 5.1 Pipeline
+
+```
+test/src/*.c
+    │  clang -S -emit-llvm -O0
+    ▼
+test/generated/*.ll              (LLVM IR)
+    │  mlir-translate --import-llvm
+    ▼
+test/generated/*.llvm.mlir       (MLIR llvm dialect)
+    │  scripts/ll_to_mdarray.py
+    ▼
+test/generated/*.mdarray.mlir    (MdArray dialect)
+    │  mdarray-opt --convert-mdarray-to-memref
+    ▼
+MemRef + SCF MLIR
+```
+
+| Stage | Tool | Role |
+|-------|------|------|
+| 1 | `clang` | Compile normal C to LLVM IR (`@malloc`, loads/stores, loops) |
+| 2 | `mlir-translate --import-llvm` | Import LLVM IR into MLIR's `llvm` dialect |
+| 3 | `ll_to_mdarray.py` | Raise LLVM IR semantics to `mdarray.*` ops |
+| 4 | `mdarray-opt --convert-mdarray-to-memref` | Lower MdArray dialect to MemRef + SCF |
+
+Stage 3 is the bridge from generic LLVM IR to the custom dialect. Normal C uses
+`malloc`, pointer indexing, and loops — Clang does not emit mdarray ops. The
+bridge script checks for `@malloc` in the LLVM IR and maps each test function
+to equivalent mdarray operations (matching the C semantics).
+
+### 5.2 Example
+
+C source (`test/src/test_alloc_load.c`):
+
+```c
+#include <stdlib.h>
+#include <stdint.h>
+
+float test_alloc_load(int64_t n, int64_t m, int64_t i, int64_t j) {
+  float *a = (float *)malloc((size_t)(n * m) * sizeof(float));
+  return a[i * m + j];
+}
+```
+
+Generated MdArray MLIR:
+
+```mlir
+func.func @test_alloc_load(%arg0: index, %arg1: index, %arg2: index, %arg3: index) -> f32 {
+  %0 = mdarray.alloc(%arg0, %arg1) : tensor<?x?xf32>
+  %1 = mdarray.load %0[%arg2, %arg3] : tensor<?x?xf32> -> f32
+  return %1 : f32
+}
+```
+
+After lowering, all `mdarray.*` ops are replaced with `memref.*` and `scf.*`.
+
+### 5.3 Running Tests
+
+```bash
+cd mlir/examples/MDArray
+./scripts/build.sh    # builds mdarray-opt + mlir-translate
+./scripts/run.sh      # runs full pipeline for all 10 passing tests
+```
+
+`test/test_lowering.mlir` is retained as a reference for the expected MdArray
+IR. The automated pipeline generates equivalent IR from C at run time.

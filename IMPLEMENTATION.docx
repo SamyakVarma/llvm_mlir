@@ -1,0 +1,464 @@
+# IMPLEMENTATION
+
+---
+
+# 1. Introduction
+
+This project implements a custom MLIR dialect called **MdArray (Multi-Dimensional Array)** and a lowering pass that converts MdArray operations into MLIR's standard MemRef dialect.
+
+The implementation is based on LLVM's Multi-Level Intermediate Representation (MLIR) infrastructure and uses the following LLVM/MLIR components:
+
+* Custom Dialect Definition
+* TableGen Operation Specification
+* Operation Verification
+* Dialect Conversion Framework
+* Type Conversion
+* Pattern Rewriting Infrastructure
+* MemRef Dialect
+* SCF Dialect
+
+---
+
+# 2. LLVM/MLIR Components Used
+
+| Component                   | Purpose                                 |
+| --------------------------- | --------------------------------------- |
+| MLIR Dialect Framework      | Creation of custom dialect              |
+| TableGen                    | Generation of operation declarations    |
+| DialectConversion Framework | Lowering operations between dialects    |
+| PatternRewriter             | Rewriting source operations             |
+| TypeConverter               | Converting tensor types to memref types |
+| MemRef Dialect              | Memory representation                   |
+| SCF Dialect                 | Loop generation for transpose operation |
+| Func Dialect                | Function definitions and signatures     |
+
+---
+
+# 3. Dialect Implementation
+
+## Dialect Name
+
+```text id="1kwu9u"
+mdarray
+```
+
+## Namespace
+
+```cpp id="vh7yio"
+mlir::mdarray
+```
+
+The dialect is registered using MLIR's Dialect framework.
+
+File:
+
+```text id="7jwg7n"
+MdArrayDialect.td
+```
+
+Responsibilities:
+
+* Define dialect name
+* Register operations
+* Enable custom parsing and printing
+* Connect generated TableGen code
+
+---
+
+# 4. TableGen Implementation
+
+MLIR uses TableGen to define operations declaratively.
+
+Files:
+
+```text id="70vflm"
+MdArrayDialect.td
+MdArrayOps.td
+MdArrayPasses.td
+```
+
+The TableGen definitions specify:
+
+* Operation names
+* Operand types
+* Result types
+* Assembly syntax
+* Verification support
+
+Example:
+
+```tablegen id="qzpt2z"
+def MdArray_AllocOp : MdArray_Op<"alloc"> {
+  let summary = "Allocate tensor";
+}
+```
+
+Benefits:
+
+* Reduces boilerplate code
+* Generates operation classes automatically
+* Provides parser and printer support
+
+---
+
+# 5. Operation Implementation
+
+Five custom operations are implemented.
+
+## 5.1 Alloc Operation
+
+Purpose:
+
+Allocate a dynamically-sized tensor.
+
+Input:
+
+* Tensor dimensions
+
+Output:
+
+* Ranked Tensor
+
+Example:
+
+```mlir id="r1thv6"
+%0 = mdarray.alloc(%n, %m)
+      : tensor<?x?xf32>
+```
+
+Lowering:
+
+```mlir id="iuv36p"
+%0 = memref.alloc(%n, %m)
+      : memref<?x?xf32>
+```
+
+---
+
+## 5.2 Load Operation
+
+Purpose:
+
+Load a scalar value from a tensor.
+
+Example:
+
+```mlir id="9zw6kw"
+%val = mdarray.load %tensor[%i, %j]
+```
+
+Lowering:
+
+```mlir id="j20qyr"
+%val = memref.load %mem[%i, %j]
+```
+
+---
+
+## 5.3 Store Operation
+
+Purpose:
+
+Store a value into a tensor.
+
+Example:
+
+```mlir id="uvxqfc"
+mdarray.store %value,
+              %tensor[%i, %j]
+```
+
+Lowering:
+
+```mlir id="v40hmc"
+memref.store %value,
+             %mem[%i, %j]
+```
+
+---
+
+## 5.4 Slice Operation
+
+Purpose:
+
+Extract a sub-tensor.
+
+Example:
+
+```mlir id="6n6h4v"
+%slice = mdarray.slice
+         %tensor[%o0,%o1]
+         [%s0,%s1]
+```
+
+Lowering:
+
+```mlir id="v56pnm"
+%sub = memref.subview
+```
+
+Additional casts are inserted when required.
+
+---
+
+## 5.5 Transpose Operation
+
+Purpose:
+
+Swap rows and columns of a tensor.
+
+Example:
+
+```mlir id="u9n82s"
+%result =
+  mdarray.transpose %tensor
+```
+
+Implementation:
+
+* Allocate output tensor
+* Determine dimensions
+* Generate nested loops
+* Load elements
+* Store using swapped indices
+
+Lowering:
+
+```mlir id="dl0xkp"
+memref.alloc
+memref.dim
+scf.for
+memref.load
+memref.store
+```
+
+This is the most complex operation in the project.
+
+---
+
+# 6. Type Conversion
+
+A custom Type Converter is implemented.
+
+Purpose:
+
+Convert tensor types into MemRef types.
+
+Example:
+
+Before conversion:
+
+```mlir id="nzz6sp"
+tensor<?x?xf32>
+```
+
+After conversion:
+
+```mlir id="p4rj5j"
+memref<?x?xf32>
+```
+
+Implementation:
+
+```cpp id="ptg1lz"
+class MdArrayTypeConverter
+```
+
+Responsibilities:
+
+* Convert tensor types
+* Handle function signatures
+* Support materialization operations
+
+---
+
+# 7. Conversion Pattern Implementation
+
+Each operation has a dedicated conversion pattern.
+
+| Pattern Class       | Converts          |
+| ------------------- | ----------------- |
+| AllocOpLowering     | mdarray.alloc     |
+| LoadOpLowering      | mdarray.load      |
+| StoreOpLowering     | mdarray.store     |
+| SliceOpLowering     | mdarray.slice     |
+| TransposeOpLowering | mdarray.transpose |
+| FuncOpConversion    | func.func         |
+| ReturnOpConversion  | func.return       |
+
+All patterns inherit from:
+
+```cpp id="v8xt3j"
+OpConversionPattern
+```
+
+and use:
+
+```cpp id="d7siv7"
+PatternRewriter
+```
+
+to replace operations.
+
+---
+
+# 8. Dialect Conversion Framework
+
+The implementation uses MLIR's DialectConversion Framework.
+
+Main Components:
+
+### TypeConverter
+
+Responsible for type mapping.
+
+### ConversionPattern
+
+Responsible for operation rewriting.
+
+### ConversionTarget
+
+Defines legal and illegal operations.
+
+### applyPartialConversion
+
+Executes the conversion process.
+
+Example flow:
+
+```text id="9n1e8j"
+MdArray Operation
+        ↓
+Conversion Pattern
+        ↓
+MemRef Operation
+```
+
+---
+
+# 9. Function Signature Conversion
+
+Function signatures are converted from tensor types to memref types.
+
+Example:
+
+Before:
+
+```mlir id="sm5z3q"
+func.func @test(
+    %arg0: tensor<?x?xf32>)
+```
+
+After:
+
+```mlir id="l4af5k"
+func.func @test(
+    %arg0: memref<?x?xf32>)
+```
+
+This ensures compatibility with lowered operations.
+
+---
+
+# 10. Verification Implementation
+
+Custom verifiers are implemented in:
+
+```text id="hgc6zy"
+MdArrayOps.cpp
+```
+
+Checks include:
+
+### Alloc
+
+* Dynamic dimensions match operands.
+
+### Load
+
+* Index count equals tensor rank.
+
+### Store
+
+* Stored value type matches tensor element type.
+
+### Slice
+
+* Offsets and sizes match rank.
+
+### Transpose
+
+* Input tensor is 2-dimensional.
+
+These checks prevent invalid IR generation.
+
+---
+
+# 11. Testing Implementation
+
+The implementation includes a test file:
+
+```text id="vkx5lm"
+test_lowering.mlir
+```
+
+Test Coverage:
+
+1. Allocation
+2. Load
+3. Store
+4. Slice
+5. Transpose
+6. Combined Pipeline
+
+Each test verifies successful lowering into MemRef operations.
+
+---
+
+# 12. Build Process
+
+Compilation is integrated with LLVM's CMake build system.
+
+Build Command:
+
+```bash id="eyt6o0"
+cmake -G Ninja ../llvm \
+-DLLVM_ENABLE_PROJECTS="mlir"
+```
+
+Compile:
+
+```bash id="n1bgmn"
+ninja mdarray-opt
+```
+
+---
+
+# 13. Result
+
+The final implementation successfully converts all custom MdArray operations into standard MLIR MemRef and SCF operations.
+
+Generated output contains:
+
+```text id="iznd2f"
+memref.alloc
+memref.load
+memref.store
+memref.subview
+scf.for
+arith.*
+```
+
+and no remaining:
+
+```text id="n3eqhj"
+mdarray.*
+```
+
+operations.
+
+---
+
+# 14. Conclusion
+
+The implementation demonstrates how LLVM MLIR can be extended through custom dialects and progressively lowered using the Dialect Conversion Framework. The project successfully integrates TableGen, custom dialects, type conversion, pattern rewriting, and lowering passes to transform high-level tensor operations into lower-level memory operations.

@@ -213,12 +213,39 @@ The test file `test/test_lowering.mlir` contains 5 test functions:
     ../mlir/examples/MDArray/test/test_lowering.mlir
 ```
 
-### Expected behavior:
+### 6.1 System Workflow
+The test suite operates through `mdarray-opt`, the MLIR CLI driver. The workflow is as follows:
+1. **Parsing**: The MLIR parser reads `test_lowering.mlir` and constructs the in-memory MLIR Module, identifying `mdarray` operations.
+2. **Pass Execution**: Invoking `--convert-mdarray-to-memref` triggers the `ConvertMdArrayToMemRef` conversion pass.
+3. **Pattern Rewriting**: The `DialectConversion` infrastructure sequentially matches `mdarray` ops and executes their rewrite patterns to emit `memref` and `scf` operations.
+4. **Validation & Output**: The transformed IR is validated by target dialect verifiers and emitted to standard output.
 
-The output should contain **no** `mdarray.*` operations — every MdArray op
-will have been replaced by `memref.alloc`, `memref.load`, `memref.store`,
-`memref.subview`, `scf.for`, etc. Function signatures will show `memref`
-types instead of `tensor` types.
+### 6.2 Core MLIR/LLVM APIs Utilized
+To facilitate the tests and the lowering pass they validate, several core MLIR APIs are engaged:
+- **`mlir::ConversionPatternRewriter`**: Manages the safe insertion, deletion, and replacement of operations during the lowering of the test cases.
+- **`mlir::TypeConverter`**: Automatically converts `tensor<?x?xf32>` used in the test signatures to `memref<?x?xf32>`.
+- **`mlir::OpAdaptor`**: Retrieves the newly converted operands (like memrefs) when lowering ops like `mdarray.store` and `mdarray.load`.
+- **`mlir::DialectConversion`**: The umbrella framework evaluating target legality and resolving type conflicts via `unrealized_conversion_cast`.
+
+### 6.3 Handling Special Cases
+The test program purposefully exercises several edge cases:
+- **Dynamic Shapes**: All tests use `?x?` dimensions, ensuring the lowering patterns can process dynamic, runtime-defined extents using `memref.dim`.
+- **Type Casting in Slices**: In `@test_slice`, `memref.subview` might yield a strided layout. The lowering handles this by inserting a `memref.cast` to safely bridge back to the expected contiguous type.
+- **Multi-Op Chains**: `@test_combined` tests transitive lowering, ensuring that a memref yielded by the transposed loop nest properly flows into the subsequent `load` operation.
+
+### 6.4 Final Results
+When executing `test_lowering.mlir`, the pass successfully achieves full progressive lowering:
+- High-level tensor allocations and memory accesses map cleanly to `memref.alloc`, `memref.load`, and `memref.store`.
+- The complex `@test_transpose` operation expands correctly into a `memref.alloc` target buffer and an `scf.for` nested loop that performs coordinate-swapped element copies.
+- Function signatures systematically transition from accepting and returning `tensor`s to `memref`s.
+- Zero `mdarray` operations remain in the output IR, indicating a complete conversion.
+
+### 6.5 Limitations of Implementation
+While the tests prove the correctness of the conversion, there are some clear limitations in the current implementation:
+- **Element Type Restriction**: The tests and dialect operations currently assume `f32` (32-bit float) data types exclusively.
+- **Rank Limitations**: The `mdarray.transpose` operation is hardcoded to support only 2-D arrays. Support for N-D permutation is not implemented.
+- **Memory Management**: The lowered IR performs `memref.alloc` but lacks corresponding `memref.dealloc` calls. In a full compilation pipeline (down to LLVM IR and binary), this would result in memory leaks. An additional bufferization or deallocation pass would be required.
+- **Suboptimal Transpose**: The generated loop nest for `transpose` is a naive copy. It does not employ advanced optimizations like cache tiling or vectorization, leaving performance on the table.
 
 ---
 

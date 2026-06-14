@@ -4,20 +4,29 @@
 
 All test cases live in `test/`. Run them with `./scripts/run.sh`.
 
-### 1.1 Passing Tests (`test/test_lowering.mlir`)
+### 1.1 Passing Tests (C → LLVM → MLIR → MdArray → MemRef)
 
-| # | Function | Ops exercised | What to verify |
-|---|----------|---------------|----------------|
-| 1 | `@test_alloc_load` | `alloc`, `load` | `memref.alloc` + `memref.load`; no `mdarray.*` ops remain |
-| 2 | `@test_store_load` | `alloc`, `store`, `load` | `memref.store` round-trips correctly |
-| 3 | `@test_slice` | `alloc`, `slice` | `memref.subview` with dynamic offsets + sizes |
-| 4 | `@test_transpose` | `alloc`, `transpose` | `scf.for` loop nest with swapped indices |
-| 5 | `@test_combined` | all five ops | Full pipeline; no `mdarray.*` ops remain |
-| 6 | `@test_1d_alloc_load` | `alloc`, `load` (rank 1) | Rank-1 memref; single index |
-| 7 | `@test_i32_tensor` | `alloc`, `store`, `load` (i32) | Type converter handles non-f32 element types |
-| 8 | `@test_slice_then_load` | `alloc`, `slice`, `load` | `subview` result fed into `memref.load` |
-| 9 | `@test_double_transpose` | `alloc`, `transpose` ×2 | Two independent `scf.for` loop nests |
-| 10 | `@test_multiple_stores` | `alloc`, `store` ×2, `load` | Each store lowers independently |
+Each passing test starts from a C source file in `test/src/`. The pipeline:
+
+1. `clang -emit-llvm` compiles C to LLVM IR with `@mdarray_*` API calls
+2. `mlir-translate --import-llvm` imports LLVM IR into MLIR's `llvm` dialect
+3. `scripts/ll_to_mdarray.py` maps API calls to `mdarray.*` ops
+4. `mdarray-opt --convert-mdarray-to-memref` lowers to MemRef + SCF
+
+| # | C source | MdArray ops exercised | What to verify |
+|---|----------|----------------------|----------------|
+| 1 | `test_alloc_load.c` | `alloc`, `load` | `memref.alloc` + `memref.load`; no `mdarray.*` ops remain |
+| 2 | `test_store_load.c` | `alloc`, `store`, `load` | `memref.store` round-trips correctly |
+| 3 | `test_slice.c` | `alloc`, `slice` | `memref.subview` with dynamic offsets + sizes |
+| 4 | `test_transpose.c` | `alloc`, `transpose` | `scf.for` loop nest with swapped indices |
+| 5 | `test_combined.c` | all five ops | Full pipeline; no `mdarray.*` ops remain |
+| 6 | `test_1d_alloc_load.c` | `alloc`, `load` (rank 1) | Rank-1 memref; single index |
+| 7 | `test_i32_tensor.c` | `alloc`, `store`, `load` (i32) | Type converter handles non-f32 element types |
+| 8 | `test_slice_then_load.c` | `alloc`, `slice`, `load` | `subview` result fed into `memref.load` |
+| 9 | `test_double_transpose.c` | `alloc`, `transpose` ×2 | Two independent `scf.for` loop nests |
+| 10 | `test_multiple_stores.c` | `alloc`, `store` ×2, `load` | Each store lowers independently |
+
+Reference MdArray IR (without running the C pipeline) is in `test/test_lowering.mlir`.
 
 ### 1.2 Failure Tests (`test/test_failure_cases.mlir`)
 

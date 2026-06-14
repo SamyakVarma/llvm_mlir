@@ -1,11 +1,14 @@
 // ============================================================================
-// test_lowering.mlir — MdArray dialect test
+// test_lowering.mlir — MdArray dialect reference IR
 //
-// This file demonstrates the multi-stage lowering from MdArray dialect
-// to the MemRef dialect. Run with:
+// This file shows the expected MdArray IR for each test case. The automated
+// test pipeline generates equivalent IR from C sources at run time:
 //
+//   test/src/*.c  →  clang  →  LLVM IR  →  ll_to_mdarray.py  →  mdarray MLIR
+//
+// Run the full pipeline with:  ./scripts/run.sh
+// Or lower this file directly:
 //   mdarray-opt --convert-mdarray-to-memref test_lowering.mlir
-//
 // ============================================================================
 
 // ---------------------------------------------------------------------------

@@ -66,8 +66,8 @@ def MdArray_StoreOp : MdArray_Op<"store", [
 //===----------------------------------------------------------------------===//
 
 def MdArray_LoadOp : MdArray_Op<"load", [
-  TypesMatchWith<"value type matches tensor element type",
-                 "tensor", "value",
+  TypesMatchWith<"result type matches tensor element type",
+                 "tensor", "result",
                  "llvm::cast<RankedTensorType>($_self).getElementType()">
 ]> {
     let summary = "Load a value from a multi-dimensional array element.";
